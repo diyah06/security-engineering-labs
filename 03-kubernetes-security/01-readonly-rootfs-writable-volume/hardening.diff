@@ -1,0 +1,22 @@
+--- manifests/insecure.yaml
++++ manifests/hardened.yaml
+@@ -1,7 +1,7 @@
+ apiVersion: v1
+ kind: Pod
+ metadata:
+-  name: rootfs-insecure
++  name: rootfs-hardened
+   namespace: rootfs-lab
+ spec:
+   os:
+@@ -34,6 +34,10 @@
+       volumeMounts:
+         - name: scratch
+           mountPath: /scratch
++          bindMountOptions:
++            - noexec
++            - nosuid
++            - nodev
+   volumes:
+     - name: scratch
+       emptyDir:

@@ -1,0 +1,7 @@
+# Optional checkpoint: requires a compatible Kubernetes 1.37+ node image/runtime.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+featureGates:
+  VolumeBindMountOptions: true
+nodes:
+  - role: control-plane
