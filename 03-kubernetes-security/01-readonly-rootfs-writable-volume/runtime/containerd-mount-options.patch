@@ -1,0 +1,86 @@
+--- a/internal/cri/server/service.go
++++ b/internal/cri/server/service.go
+@@ -283,6 +283,7 @@
+ 	c.runtimeFeatures = &runtime.RuntimeFeatures{
+ 		SupplementalGroupsPolicy:  true,
+ 		UserNamespacesHostNetwork: goruntime.GOOS == "linux",
++		MountOptions:             goruntime.GOOS == "linux",
+ 	}
+ 
+ 	return c, c, nil
+--- a/internal/cri/opts/spec_linux_opts.go
++++ b/internal/cri/opts/spec_linux_opts.go
+@@ -199,6 +199,11 @@
+ 						mount.HostPath)
+ 				}
+ 				options = append(options, "rw")
++			}
++
++			options, err = lab01BindMountOptions(options, mount.GetMountOptions())
++			if err != nil {
++				return err
+ 			}
+ 
+ 			if mount.GetSelinuxRelabel() {
+--- /dev/null
++++ b/internal/cri/opts/lab01_mount_linux.go
+@@ -0,0 +1,27 @@
++// Lab-only CRI compatibility implementation; not an upstream containerd release.
++package opts
++
++import "fmt"
++
++// lab01BindMountOptions preserves unrelated options and gives CRI security flags
++// precedence over their opposites. Reject anything outside the Kubernetes API.
++func lab01BindMountOptions(base, requested []string) ([]string, error) {
++    result := append([]string(nil), base...)
++    for _, option := range requested {
++        var opposite string
++        switch option {
++        case "noexec": opposite = "exec"
++        case "nosuid": opposite = "suid"
++        case "nodev": opposite = "dev"
++        default: return nil, fmt.Errorf("unsupported CRI bind mount option %q", option)
++        }
++        filtered := result[:0]
++        for _, existing := range result {
++            if existing != option && existing != opposite {
++                filtered = append(filtered, existing)
++            }
++        }
++        result = append(filtered, option)
++    }
++    return result, nil
++}
+--- /dev/null
++++ b/internal/cri/opts/lab01_mount_linux_test.go
+@@ -0,0 +1,29 @@
++package opts
++
++import (
++    "reflect"
++    "testing"
++)
++
++func TestLab01BindMountOptions(t *testing.T) {
++    tests := []struct {
++        name string
++        base, requested, want []string
++        wantErr bool
++    }{
++        {"baseline unchanged", []string{"rbind", "rprivate", "rw"}, nil, []string{"rbind", "rprivate", "rw"}, false},
++        {"security flags", []string{"rbind", "rw"}, []string{"noexec", "nosuid", "nodev"}, []string{"rbind", "rw", "noexec", "nosuid", "nodev"}, false},
++        {"conflicts and duplicates", []string{"ro", "exec", "suid", "dev", "noexec"}, []string{"noexec", "nosuid", "nodev", "noexec"}, []string{"ro", "nosuid", "nodev", "noexec"}, false},
++        {"reject weakening flag", []string{"ro"}, []string{"exec"}, nil, true},
++        {"reject unknown flag", []string{"rw"}, []string{"invalid"}, nil, true},
++    }
++    for _, tt := range tests {
++        t.Run(tt.name, func(t *testing.T) {
++            original := append([]string(nil), tt.base...)
++            got, err := lab01BindMountOptions(tt.base, tt.requested)
++            if (err != nil) != tt.wantErr { t.Fatalf("unexpected error: %v", err) }
++            if !reflect.DeepEqual(got, tt.want) { t.Fatalf("got %v, want %v", got, tt.want) }
++            if !reflect.DeepEqual(tt.base, original) { t.Fatal("input options were mutated") }
++        })
++    }
++}

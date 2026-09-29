@@ -66,6 +66,15 @@ for pod in "${pods[@]}"; do
   fi
 
   expect 1 'Read-only file system' "${k[@]}" exec "$pod" -- touch /tmp/lab-write-probe
+  # Survey additional mounts without assuming every failure is caused by ro.
+  run "${k[@]}" exec "$pod" -- sh -c '
+    for directory in / /etc /tmp /scratch /dev/shm; do
+      probe="${directory%/}/lab-directory-probe"
+      rc=0
+      touch "$probe" 2>&1 || rc=$?
+      printf "directory=%s write_exit=%s\n" "$directory" "$rc"
+      if [ "$rc" -eq 0 ]; then rm "$probe" || exit 1; fi
+    done'
   expect 0 '' "${k[@]}" exec "$pod" -- sh -c 'touch /scratch/lab-write-probe && rm /scratch/lab-write-probe'
   expect 0 '' "${k[@]}" exec "$pod" -- sh -c 'cp /bin/busybox /scratch/busybox && chmod 755 /scratch/busybox'
   expect 0 '' "${k[@]}" exec "$pod" -- sh -c 'printf "#!/bin/sh\necho interpreted-from-scratch\n" > /scratch/demo.sh && chmod 755 /scratch/demo.sh'

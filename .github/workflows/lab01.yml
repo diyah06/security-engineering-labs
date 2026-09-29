@@ -13,7 +13,7 @@ concurrency:
 jobs:
   experiment:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       KIND_VERSION: v0.33.0
       KUBECTL_VERSION: v1.37.0
@@ -21,7 +21,7 @@ jobs:
       LAB: 03-kubernetes-security/01-readonly-rootfs-writable-volume
     steps:
       - name: Check out the experiment
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
       - name: Install checksum-verified tools on the temporary runner
@@ -53,8 +53,36 @@ jobs:
         run: bash "$LAB/verify.sh" baseline
       - name: Remove baseline cluster
         run: kind delete cluster --name security-labs
+      - name: Set up Go for the lab-only runtime build
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.6'
+          cache: false
+      - name: Build and test the lab-only runtime compatibility patch
+        run: |
+          set -euo pipefail
+          source_dir="${RUNNER_TEMP}/lab01-containerd"
+          git init "$source_dir"
+          git -C "$source_dir" remote add origin https://github.com/containerd/containerd.git
+          git -C "$source_dir" fetch --depth=1 origin a7fe631d96c08fb14cf8eff0afdc280e99c30a94
+          git -C "$source_dir" checkout --detach FETCH_HEAD
+          git -C "$source_dir" apply --check "$GITHUB_WORKSPACE/$LAB/runtime/containerd-mount-options.patch"
+          git -C "$source_dir" apply "$GITHUB_WORKSPACE/$LAB/runtime/containerd-mount-options.patch"
+          cd "$source_dir"
+          gofmt -w internal/cri/opts/lab01_mount_linux*.go
+          CGO_ENABLED=0 go test -mod=vendor ./internal/cri/opts -run 'TestLab01BindMountOptions|TestWithMounts' -count=1 -v
+          CGO_ENABLED=0 go build -mod=vendor -tags 'urfave_cli_no_docs osusergo netgo' -ldflags '-X github.com/containerd/containerd/v2/version.Version=v2.4.0-lab01 -X github.com/containerd/containerd/v2/version.Revision=a7fe631d96c08fb14cf8eff0afdc280e99c30a94-lab01' -o containerd ./cmd/containerd
+          ./containerd --version
+          sha256sum containerd "$GITHUB_WORKSPACE/$LAB/runtime/containerd-mount-options.patch"
+          printf 'ARG BASE\nFROM ${BASE}\nCOPY containerd /usr/local/bin/containerd\n' > Dockerfile.lab01
+          docker build --build-arg "BASE=$NODE_IMAGE" -f Dockerfile.lab01 -t lab01-node:containerd-mount-options .
       - name: Create mount-controls cluster
-        run: kind create cluster --name security-labs-mounts --config "$LAB/kind-mount-controls.yaml" --image "$NODE_IMAGE" --wait 180s
+        run: kind create cluster --name security-labs-mounts --config "$LAB/kind-mount-controls.yaml" --image lab01-node:containerd-mount-options --wait 180s
+      - name: Record runtime compatibility
+        run: |
+          docker exec security-labs-mounts-control-plane containerd --version
+          docker exec security-labs-mounts-control-plane crictl info | jq '{runtimeFeatures: .runtimeFeatures}'
+          kubectl --context kind-security-labs-mounts get nodes -o 'jsonpath={range .items[*]}{.metadata.name}{" "}{.status.declaredFeatures}{"\n"}{end}'
       - name: Run controlled comparison
         run: bash "$LAB/verify.sh" comparison
       - name: Remove temporary lab clusters
