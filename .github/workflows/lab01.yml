@@ -19,7 +19,6 @@ jobs:
       KUBECTL_VERSION: v1.37.0
       NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       LAB: 03-kubernetes-security/01-readonly-rootfs-writable-volume
-      KUBECONFIG: ${{ runner.temp }}/lab01-kubeconfig
     steps:
       - name: Check out the experiment
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -39,6 +38,7 @@ jobs:
           printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check
           install -m 0755 kubectl lab01-bin/kubectl
           echo "${RUNNER_TEMP}/lab01-bin" >> "$GITHUB_PATH"
+          echo "KUBECONFIG=${RUNNER_TEMP}/lab01-kubeconfig" >> "$GITHUB_ENV"
       - name: Record environment
         run: |
           date -u '+%Y-%m-%dT%H:%M:%SZ'
