@@ -1,0 +1,56 @@
+name: Lab 02 service-account RBAC experiment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab02-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      KIND_VERSION: v0.33.0
+      KUBECTL_VERSION: v1.37.0
+      NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      LAB: 03-kubernetes-security/02-service-account-rbac
+    steps:
+      - name: Check out the experiment
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install checksum-verified tools on the temporary runner
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          mkdir -p lab02-bin
+          curl --fail --silent --show-error --location --retry 3 -O "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          curl --fail --silent --show-error --location --retry 3 -O "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          sha256sum --check kind-linux-amd64.sha256sum
+          install -m 0755 kind-linux-amd64 lab02-bin/kind
+          curl --fail --silent --show-error --location --retry 3 -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl --fail --silent --show-error --location --retry 3 -o kubectl.sha256 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check
+          install -m 0755 kubectl lab02-bin/kubectl
+          echo "${RUNNER_TEMP}/lab02-bin" >> "$GITHUB_PATH"
+          echo "KUBECONFIG=${RUNNER_TEMP}/lab02-kubeconfig" >> "$GITHUB_ENV"
+      - name: Record environment
+        run: |
+          date -u '+%Y-%m-%dT%H:%M:%SZ'
+          uname -sm
+          kind version
+          kubectl version --client
+          docker version --format 'Docker server: {{.Server.Version}}'
+          printf 'Source commit: %s\nNode image: %s\n' "$GITHUB_SHA" "$NODE_IMAGE"
+      - name: Create isolated RBAC cluster
+        run: kind create cluster --name rbac-lab --image "$NODE_IMAGE" --wait 180s
+      - name: Validate baseline and least privilege
+        run: bash "$LAB/verify.sh"
+      - name: Delete temporary RBAC cluster
+        if: always()
+        run: kind delete cluster --name rbac-lab

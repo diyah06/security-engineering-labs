@@ -1,0 +1,14 @@
+--- manifests/insecure.yaml
++++ manifests/hardened.yaml
+@@ -5,8 +5,9 @@
+   namespace: rbac-lab
+ rules:
+   - apiGroups: [""]
+-    resources: ["configmaps", "secrets"]
+-    verbs: ["get", "list", "watch", "patch"]
++    resources: ["configmaps"]
++    resourceNames: ["app-config"]
++    verbs: ["get"]
+ ---
+ apiVersion: rbac.authorization.k8s.io/v1
+ kind: RoleBinding
