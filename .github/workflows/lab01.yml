@@ -1,0 +1,64 @@
+name: Lab 01 filesystem experiment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab01-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      KIND_VERSION: v0.33.0
+      KUBECTL_VERSION: v1.37.0
+      NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      LAB: 03-kubernetes-security/01-readonly-rootfs-writable-volume
+      KUBECONFIG: ${{ runner.temp }}/lab01-kubeconfig
+    steps:
+      - name: Check out the experiment
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-verified tools on the temporary runner
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          mkdir -p lab01-bin
+          curl --fail --silent --show-error --location --retry 3 -O "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          curl --fail --silent --show-error --location --retry 3 -O "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          sha256sum --check kind-linux-amd64.sha256sum
+          install -m 0755 kind-linux-amd64 lab01-bin/kind
+          curl --fail --silent --show-error --location --retry 3 -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl --fail --silent --show-error --location --retry 3 -o kubectl.sha256 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check
+          install -m 0755 kubectl lab01-bin/kubectl
+          echo "${RUNNER_TEMP}/lab01-bin" >> "$GITHUB_PATH"
+      - name: Record environment
+        run: |
+          date -u '+%Y-%m-%dT%H:%M:%SZ'
+          uname -sm
+          kind version
+          kubectl version --client
+          docker version --format 'Docker server: {{.Server.Version}}'
+          printf 'Source commit: %s\nNode image: %s\n' "$GITHUB_SHA" "$NODE_IMAGE"
+      - name: Create baseline cluster
+        run: kind create cluster --name security-labs --config "$LAB/kind.yaml" --image "$NODE_IMAGE" --wait 180s
+      - name: Run baseline experiment
+        run: bash "$LAB/verify.sh" baseline
+      - name: Remove baseline cluster
+        run: kind delete cluster --name security-labs
+      - name: Create mount-controls cluster
+        run: kind create cluster --name security-labs-mounts --config "$LAB/kind-mount-controls.yaml" --image "$NODE_IMAGE" --wait 180s
+      - name: Run controlled comparison
+        run: bash "$LAB/verify.sh" comparison
+      - name: Remove temporary lab clusters
+        if: always()
+        run: |
+          kind delete cluster --name security-labs
+          kind delete cluster --name security-labs-mounts
