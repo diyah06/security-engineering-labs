@@ -81,8 +81,8 @@ jobs:
       - name: Record runtime compatibility
         run: |
           docker exec security-labs-mounts-control-plane containerd --version
-          docker exec security-labs-mounts-control-plane crictl info | jq '{runtimeFeatures: .runtimeFeatures}'
           kubectl --context kind-security-labs-mounts get nodes -o 'jsonpath={range .items[*]}{.metadata.name}{" "}{.status.declaredFeatures}{"\n"}{end}'
+          kubectl --context kind-security-labs-mounts get nodes -o json | jq -e 'all(.items[]; (.status.declaredFeatures | index("VolumeBindMountOptions")) != null)'
       - name: Run controlled comparison
         run: bash "$LAB/verify.sh" comparison
       - name: Remove temporary lab clusters

@@ -1,5 +1,7 @@
 # Lab 01 remote experiment — 2026-09-29 UTC
 
+Historical run. A later [completed comparison](2026-09-29-completed-comparison.md) used an explicitly documented custom runtime. The observations below remain unchanged and apply to the initial stock-runtime attempt.
+
 Status: baseline reproduced; hardened execution tests blocked by scheduling. The overall workflow concluded **failure**, not success.
 
 ## Provenance and environment

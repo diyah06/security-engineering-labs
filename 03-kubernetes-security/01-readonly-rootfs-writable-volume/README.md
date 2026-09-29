@@ -1,6 +1,6 @@
 # Lab 01: a read-only root filesystem is not an execution policy
 
-**Status: baseline reproduced remotely; hardened comparison blocked by node feature compatibility.** On 2026-09-29 UTC, the baseline passed on GitHub Actions. The hardened Pod was accepted but remained unschedulable. Its execution controls have not been validated. See [reviewed evidence](evidence/2026-09-29-github-actions.md).
+**Status: complete in the documented remote lab environment.** Baseline, hardened comparison, directory survey, and interpreter limitation were reproduced on GitHub Actions on 2026-09-29 UTC. The comparison required a [custom lab-only containerd build](runtime/README.md); this is not a claim of stock-runtime or production support. See [reviewed evidence](evidence/2026-09-29-completed-comparison.md).
 
 ## Fundamentals
 
@@ -13,11 +13,13 @@ Before running: predict whether writing `/tmp/probe` and `/scratch/probe` will w
 ## Architecture
 
 ```text
-macOS → Docker Linux VM → kind node → rootfs-lab namespace
+GitHub Ubuntu runner → Docker → kind node → rootfs-lab namespace
                                   └─ demo Pod (UID 1000)
                                      ├─ /         read-only image
                                      └─ /scratch  writable emptyDir
 ```
+
+The completed run used Linux/amd64 remotely. The stock baseline used containerd 2.3.4; the controlled comparison ran both Pods on containerd 2.4.0-lab01 with the mount-options feature gate enabled. Local macOS execution is an alternative, not a validated environment.
 
 One sleeping BusyBox container; no Service, ingress, hostPath, privileged container, credentials, or application exploit. Each comparison Pod gets its own ephemeral volume. Deleting its Pod removes that volume. We copy a harmless existing binary rather than downloading a payload.
 
@@ -58,11 +60,11 @@ The [manual workflow](../../.github/workflows/lab01.yml) runs on a temporary Ubu
 gh workflow run lab01.yml --repo diyah06/security-engineering-labs --ref main
 ```
 
-The workflow verifies downloaded tool checksums, pins kind 0.33.0 and the Kubernetes 1.37.0 node image by digest, then creates the baseline cluster and a separate feature-enabled cluster. It invokes [verify.sh](verify.sh) to apply the existing manifests and assert observed exit codes and mount flags. It deletes both temporary clusters afterward, including on failure. Logs contain the commands and results; kubeconfigs and binaries are not published.
+The workflow verifies downloaded tool checksums, pins kind 0.33.0 and the Kubernetes 1.37.0 node image by digest, then creates the stock baseline cluster and builds a separate feature-enabled node with the tested [runtime patch](runtime/README.md). Both comparison Pods run on that same custom node. It invokes [verify.sh](verify.sh) to apply the existing manifests and assert observed exit codes and mount flags. It deletes both temporary clusters afterward, including on failure. Logs contain the commands and results; kubeconfigs and binaries are not published.
 
-Use the run URL printed by GitHub CLI to inspect each step. A successful baseline step does not mean the full comparison passed. The recorded run failed at hardened Pod readiness; repeated runs with the same unsupported setup may fail there again.
+Use the run URL printed by GitHub CLI to inspect each step. A successful baseline step does not mean the full comparison passed. The initial stock-runtime run failed at hardened Pod readiness. The completed workflow builds the compatibility runtime and passes the comparison; the earlier failure remains in the evidence history.
 
-The remote script tests `/tmp` and `/scratch`, direct binary/script execution, and explicit interpreter execution. It prints selected mount flags without host backing paths. The broader directory survey below remains a separate manual exercise.
+The remote script tests `/tmp` and `/scratch`, surveys writes to `/`, `/etc`, `/tmp`, `/scratch`, and `/dev/shm`, and tests direct binary/script execution and explicit interpreter execution. It prints selected mount flags without host backing paths.
 
 ### Checkpoint A — baseline only
 
@@ -156,10 +158,10 @@ Writing remains possible. Changing the mount to read-only would remove required 
 
 **Compatibility gate:** the cited Kubernetes 1.37 documentation describes `VolumeBindMountOptions` as alpha. It must be enabled on the API server and kubelet, and the runtime must support CRI mount options. Ordinary older `emptyDir` YAML cannot express these controls. Do not add a made-up `emptyDir.mountOptions` field. `kubectl` schema acceptance alone does not prove enforcement.
 
-The optional kind config enables the gate but does not upgrade the node image or its runtime. Once you have a compatible kind node image/runtime, use a separate local cluster:
+The optional kind config enables the gate but does not upgrade the node image or its runtime. The remote workflow builds `lab01-node:containerd-mount-options` from the pinned upstream node plus the documented custom runtime. To run the commands below manually, first build that image using the recipe in the workflow, or supply another independently verified compatible image. An ordinary stock node is not a verified substitute. Use a separate cluster:
 
 ```bash
-kind create cluster --name security-labs-mounts --config kind-mount-controls.yaml --wait 120s
+kind create cluster --name security-labs-mounts --config kind-mount-controls.yaml --image lab01-node:containerd-mount-options --wait 120s
 kubectl --context kind-security-labs-mounts create namespace rootfs-lab
 kubectl --context kind-security-labs-mounts explain pod.spec.containers.volumeMounts.bindMountOptions
 kubectl --context kind-security-labs-mounts apply --dry-run=server --validate=strict -f manifests/hardened.yaml
@@ -168,7 +170,7 @@ kubectl --context kind-security-labs-mounts apply -f manifests/hardened.yaml
 kubectl --context kind-security-labs-mounts -n rootfs-lab wait --for=condition=Ready pod --all --timeout=120s
 ```
 
-If cluster creation, schema validation, scheduling, or container startup fails, stop B and record it as unsupported in this environment. The pinned 1.37.0 image used by the remote workflow accepted the field but could not schedule the hardened Pod; a compatible node/runtime configuration has not been verified here. Do not remove the feature gate or bypass validation to claim success.
+If cluster creation, schema validation, scheduling, or container startup fails, stop B and record it as unsupported in this environment. The original stock 1.37.0 image accepted the field but could not schedule the hardened Pod. The later custom-runtime node successfully scheduled and enforced the unchanged manifest; see the runtime recipe and evidence. Do not remove the feature gate or bypass validation to claim success.
 
 Repeat checkpoint A's mount/write/binary probes on this cluster for **both** Pod names, replacing the context with `kind-security-labs-mounts`. Expected hardened outcome: copying and chmod succeed, execution fails with permission denied and a nonzero status. Confirm `/scratch` actually has `noexec,nosuid,nodev`. This test demonstrates `noexec`; it does not independently test the other two flags.
 
@@ -208,20 +210,23 @@ These are hypotheses, not measurements. Other writable mounts are outside this m
 
 ## Observed behavior
 
-Observed in [GitHub Actions run 36506196345](https://github.com/diyah06/security-engineering-labs/actions/runs/36506196345), using Kubernetes 1.37.0 and containerd 2.3.4:
+Observed in [successful run 36508385718](https://github.com/diyah06/security-engineering-labs/actions/runs/36508385718), using Kubernetes 1.37.0. Both comparison Pods used containerd **2.4.0-lab01**, the same BusyBox image digest, UID/GID 1000, and the unchanged manifests.
 
 | Probe | Baseline observed | Hardened observed |
 | --- | --- | --- |
-| Pod readiness | Ready on both clusters | Pending; required node features unavailable |
-| Root mount | `ro,relatime` | Not measured |
-| Scratch mount | `rw,relatime` | Not measured |
-| Write `/tmp` | Read-only filesystem error, exit 1 | Not run |
-| Write `/scratch` | Succeeded, exit 0 | Not run |
-| Execute copied BusyBox | Succeeded, exit 0 | Not run |
-| Execute scratch script directly | Succeeded, exit 0 | Not run |
-| Execute script via `/bin/sh` | Succeeded, exit 0 | Not run |
+| Pod readiness | Ready | Ready |
+| Root mount | `ro,relatime` | `ro,relatime` |
+| Scratch mount | `rw,relatime` | `rw,nosuid,nodev,noexec,relatime` |
+| Write `/`, `/etc`, `/tmp` | Read-only filesystem errors, exit 1 | Same |
+| Write `/scratch`, `/dev/shm` | Succeeded, exit 0 | Same |
+| Copy BusyBox to scratch and chmod | Succeeded, exit 0 | Same |
+| Execute copied BusyBox | Succeeded, exit 0 | Permission denied, exit 126 |
+| Execute scratch script directly | Succeeded, exit 0 | Permission denied, exit 126 |
+| Execute script via `/bin/sh` | Succeeded, exit 0 | Succeeded, exit 0 |
 
-Both server-side manifest validation and hardened Pod creation succeeded. Its 180-second readiness wait failed with `Unschedulable`: the node did not match the Pod's required features. The overall workflow failed and cleaned up its clusters. This is a compatibility result, not evidence that `noexec` denied execution. Full versions, image identity, commands, and reviewed output are in the [evidence record](evidence/2026-09-29-github-actions.md).
+The stock-runtime baseline also passed separately. Runtime option-handling tests, server-side manifest validation, readiness checks, mount assertions, execution probes, and cluster cleanup all passed. See [complete provenance and reviewed output](evidence/2026-09-29-completed-comparison.md).
+
+The [initial stock-runtime failure](evidence/2026-09-29-github-actions.md) remains part of the learning record: API acceptance succeeded, but the node could not schedule the hardened Pod. The custom runtime solved that compatibility problem; no Pod protections were removed.
 
 ## Security implications
 
@@ -232,8 +237,10 @@ A read-only root mount protects image contents against filesystem writes. It is 
 - The root mount and scratch mount enforced different write policies. A read-only root did not prevent executing a copied program from scratch storage as UID 1000.
 - The write and execution probes were separate observations; a successful write alone would not establish that execution was possible.
 - API schema acceptance did not establish runtime compatibility. The hardened manifest passed validation but could not schedule.
-- The baseline interpreter probe passed. The claim that an interpreter can read scripts from a `noexec` mount remains untested in this run because the hardened Pod never started.
-- Next, inspect the node's declared features and runtime capabilities, choose a supported configuration, and rerun the unchanged hardened comparison. Do not treat a Kubernetes version number alone as proof of support.
+- On the compatible lab runtime, `noexec` denied direct binary and script execution while preserving writes. Explicit interpreter execution still succeeded, so this control is not a general execution allowlist.
+- `/dev/shm` was writable in both Pods; hardening `/scratch` did not harden every writable mount. Execution from `/dev/shm` was not tested.
+- The node advertised `VolumeBindMountOptions` after the compatibility patch. Actual mount flags and exit codes, not just the API field or feature declaration, established enforcement.
+- `nosuid` and `nodev` were observed as mount flags, but their individual behavioral effects were not tested. Production use requires supported upstream runtimes and broader validation, not this lab patch.
 
 ## News connection and sources
 
@@ -246,4 +253,4 @@ Candidate portfolio angle: “I tested whether a read-only Kubernetes root files
 - [kind quick start](https://kind.sigs.k8s.io/docs/user/quick-start/).
 - Homebrew prerequisites: [kind](https://formulae.brew.sh/formula/kind), [kubectl](https://formulae.brew.sh/formula/kubernetes-cli), [Docker Desktop](https://formulae.brew.sh/cask/docker-desktop).
 
-Remaining work: establish a compatible runtime/node configuration for checkpoint B and record its actual results before claiming full hardening validation. Local macOS reproduction and the broader manual directory survey have not run.
+Completion scope: the filesystem question, baseline, hardened comparison, interpreter limitation, directory survey, evidence, and lessons are complete in the documented remote environment. Local macOS reproduction, stock-runtime hardening support, other volume types, and independent behavioral tests of `nosuid`/`nodev` are outside this result.
