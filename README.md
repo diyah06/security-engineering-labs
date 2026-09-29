@@ -15,7 +15,7 @@ Hands-on personal learning using synthetic systems and data. Each experiment sta
 
 ## First experiment
 
-[Read-only root filesystem and writable volumes](03-kubernetes-security/01-readonly-rootfs-writable-volume/README.md) — **prepared, not run**. Includes an insecure baseline and a separate, version-dependent mount-hardening checkpoint.
+[Read-only root filesystem and writable volumes](03-kubernetes-security/01-readonly-rootfs-writable-volume/README.md) — **baseline reproduced on GitHub Actions; hardened comparison blocked by node feature compatibility**. Includes reviewed runtime evidence and a manually triggered remote experiment.
 
 ## From security news to a portfolio entry
 
